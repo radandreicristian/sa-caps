@@ -3,6 +3,8 @@ from typing import Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as f
+from logging import log
+
 from einops import repeat
 
 from src.models.components.featurizer import TokenFeaturizer
@@ -11,14 +13,13 @@ from src.models.components.featurizer import TokenFeaturizer
 class SRCapsNet(nn.Module):
     def __init__(self,
                  *,
-                 pretrained_embeddings: dict,
-                 sparse_features: dict,
                  n_slots,
                  n_intents,
                  max_seq_len: int = 30,
                  n_heads: int = 16,
                  n_layers: int = 2,
-                 d_model: int = 512):
+                 d_model: int = 512,
+                 d_semantic_space: int = 20):
         super(SRCapsNet, self).__init__()
 
         # Set sizes and dimensions
@@ -30,34 +31,45 @@ class SRCapsNet(nn.Module):
 
         self.max_seq_len = max_seq_len
         self.d_model = d_model
+        self.d_semantic_space = d_semantic_space
+        self.n_heads = n_heads
 
-        # Init various tensors and subnets
-
+        # Instantiate sub-networks and components
+        self.pretrained_embedder = nn.Embedding.from_pretrained()
         self.word_featurizer = TokenFeaturizer(d_model=self.d_model)
 
         self.encoder = nn.ModuleList(
-            [nn.TransformerEncoderLayer(d_model=d_model, nhead=n_heads) for _ in range(n_layers)])
+            [nn.TransformerEncoderLayer(d_model=self.d_model, nhead=self.n_heads) for _ in range(n_layers)])
 
+        self.intent_embedder = nn.Linear(self.d_model, self.d_semantic_space)
+
+        # Initialize weights
+
+        # w_activation_words (d, d) - Used if we want to learn the activation of words during training
         self.w_activations_words = nn.Parameter(torch.FloatTensor(self.d_model,
                                                                   self.d_model),
                                                 requires_grad=True)
 
+        # w_route_ws (max_seq_len, n_slot_caps, d_model) - Routing between word caps and slot caps
         self.w_route_ws = nn.Parameter(torch.FloatTensor(self.max_seq_len,
                                                          self.n_slot_caps,
                                                          self.d_model),
                                        requires_grad=True)
 
+        # w_pose_ws (max_seq_len, n_slot_caps, d_model, d_model) - Pose between word caps and slot caps
         self.w_pose_ws = nn.Parameter(torch.FloatTensor(self.max_seq_len,
                                                         self.n_slot_caps,
                                                         self.d_model,
                                                         self.d_model),
                                       requires_grad=True)
 
+        # w_route_si (n_slot_caps, n_intent_caps, d_model) - Routing between slot caps and intent caps
         self.w_route_si = nn.Parameter(torch.FloatTensor(self.n_slot_caps,
                                                          self.n_intent_caps,
                                                          self.d_model),
                                        requires_grad=True)
 
+        # w_pose_ws (n_slot_caps, n_intent_caps, d_model, d_model) - Pose between slot caps and intent caps
         self.w_pose_si = nn.Parameter(torch.FloatTensor(self.n_slot_caps,
                                                         self.n_intent_caps,
                                                         self.d_model,
@@ -65,11 +77,11 @@ class SRCapsNet(nn.Module):
                                       requires_grad=True)
 
     def route_words_to_slots(self,
-                             token_features: torch.FloatTensor,
+                             token_features: torch.Tensor,
                              token_activation_strategy: str = 'norm'
-                             ) -> Tuple[torch.FloatTensor, torch.FloatTensor]:
+                             ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Route layer l (tokens) to layer l+1 (slots).
+        Performs self routing between the word capsules (post-encoder embeddings) and the slot capsules.
         :param token_activation_strategy: Experimental
                'norm' - Compute token activation as a mean over d_model
                'weighted' - Compute token activations with a learnable linear layer
@@ -79,8 +91,7 @@ class SRCapsNet(nn.Module):
 
         # Todo - Cum putem sa compunem "activarile" la nivel de token? Putem tot in aceeasi maniera cumva...learnable
         if token_activation_strategy == 'norm':
-            _, d = token_features.shape
-            a_words = torch.einsum('bij -> bi', token_features) / d
+            a_words = torch.einsum('bij -> bi', token_features) / self.d_model
         elif token_activation_strategy == 'weighted':
             a_words = torch.einsum('bij, jk -> bik', token_features, self.w_activations_words)
         else:
@@ -110,11 +121,17 @@ class SRCapsNet(nn.Module):
         u_slots = torch.einsum('bls, bl, blsk -> bsk', c_ws, a_words, u_hat_slots) / repeat(
             torch.einsum('bls, bl -> bs', c_ws, a_words), 'bi -> bid', d=self.d_model)
 
-        return a_slots, u_slots
+        return c_ws, a_slots, u_slots
 
     def route_slots_to_intents(self,
-                               a_slots: torch.FloatTensor,
-                               u_slots: torch.FloatTensor) -> Tuple[torch.FloatTensor, torch.FloatTensor]:
+                               a_slots: torch.Tensor,
+                               u_slots: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Performs self routing between the slot capsules and the intent capsules.
+        :param a_slots: Activation of slot capsules (b,
+        :param u_slots:
+        :return:
+        """
         # w_route_si (n_slot_caps, n_intent_caps, d)
         # u_slots (b, n_slot_caps, d)
         # c_ws_logits (b, n_slot_caps, n_intent_caps)
@@ -138,21 +155,57 @@ class SRCapsNet(nn.Module):
         # u_slots (b, n_slots, d)
         u_hat_intents = torch.einsum('sijk, bsk -> bsik', self.w_pose_si, u_slots)
 
-        # c_si (b, n_slot_caps, n_intent_caps)
-        # a_slots (b, n_slot_caps)
-        # u_hat_intents (b, n_slot_caps, n_intent_caps, d_model)
-        # nominator: (b, n_intent_caps,
+        # nominator: (b, n_intent_caps, d), denominator = (b, n_intent_caps, d)
+        # u_intents: (b, n_intent_caps, d)
         u_intents = torch.einsum('bsi, bs, bsik -> bik', c_si, a_slots, u_hat_intents) / repeat(
             torch.einsum('bsi, bs -> bi', c_si, a_slots), 'bi -> bid', d=self.d_model)
 
         return a_intents, u_intents
 
     def forward(self, x):
+
+        # Todo - Do the padding in the training loop
         # x (b, max_batch_seq_len, chars_in_word)
         b, batch_max_seq_len, _ = x.shape
         assert (batch_max_seq_len <= self.max_seq_len, 'A sequence in the batch is too long.')
 
-        # tokens(b,
-        tokens = self.word_featurizer(x)
+        # Todo - Replace with ConveRT aggregate vector
+        cls_token = torch.Tensor(torch.randn(1, 1, self.d_model))
+
+        tokens = torch.cat((x, cls_token), dim=-2)
+
+        # tokens(b, max_seq_len+1, d_model)
+        embedded_tokens = self.word_featurizer(tokens)
+
+        # encoded_embeddings (b, max_seq_len+1, d_model)
+        encoded_embeddings = self.encoder(embedded_tokens)
+
+        # word_slots (b, max_seq_len, d_model)
+        # cls_token  (b, 1, d_model) or (b, d_model)
+        word_slots, cls_token = torch.split(encoded_embeddings, self.max_seq_len, dim=1)
+
+        # Get it to (b, d_model), if it's (b, 1, d_model)
+        if cls_token.ndimension == 3:
+            cls_token = cls_token.squeeze(axis=1)
+
+        c_ws, a_slots, u_slots = self.route_words_to_slots(token_features=word_slots)
+
+        # slot (b, seq_len)
+        slots = torch.argmax(c_ws, dim=-1, keepdim=False)
+
+        # a_intents (b, n_intent_caps)
+        # u_intents (b, n_intent_caps, d)
+        a_intents, u_intents = self.route_slots_to_intents(a_slots, u_slots)
+
+        # max_activations (b)
+        max_activations = torch.argmax(a_intents, dim=-1, keepdim=False)
+
+        # Todo - Figure the right slicing for this - Result should be (b, d_model)
+        max_activation_poses = u_intents[:, max_activations, :]
+
+        # intents (b, d_model)
+        intents = cls_token + max_activation_poses
+
+        # TODO - Select Masked words, mask them accordingly.
 
         pass
