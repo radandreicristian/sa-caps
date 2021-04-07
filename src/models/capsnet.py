@@ -3,8 +3,6 @@ from typing import Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as f
-from logging import log
-
 from einops import repeat
 
 from src.models.components.featurizer import TokenFeaturizer
@@ -167,6 +165,7 @@ class SRCapsNet(nn.Module):
         # Todo - Do the padding in the training loop
         # x (b, max_batch_seq_len, chars_in_word)
         b, batch_max_seq_len, _ = x.shape
+        n_i = self.n_intent_caps
         assert (batch_max_seq_len <= self.max_seq_len, 'A sequence in the batch is too long.')
 
         # Todo - Replace with ConveRT aggregate vector
@@ -185,7 +184,7 @@ class SRCapsNet(nn.Module):
         word_slots, cls_token = torch.split(encoded_embeddings, self.max_seq_len, dim=1)
 
         # Get it to (b, d_model), if it's (b, 1, d_model)
-        if cls_token.ndimension == 3:
+        if cls_token.ndim == 3:
             cls_token = cls_token.squeeze(axis=1)
 
         c_ws, a_slots, u_slots = self.route_words_to_slots(token_features=word_slots)
@@ -197,15 +196,11 @@ class SRCapsNet(nn.Module):
         # u_intents (b, n_intent_caps, d)
         a_intents, u_intents = self.route_slots_to_intents(a_slots, u_slots)
 
-        # max_activations (b)
-        max_activations = torch.argmax(a_intents, dim=-1, keepdim=False)
-
-        # Todo - Figure the right slicing for this - Result should be (b, d_model)
-        max_activation_poses = u_intents[:, max_activations, :]
+        # Todo - Figure how to do this with torch.gather
+        max_activations = torch.argmax(a_intents, dim=-1, keepdim=False) + torch.arange(0, b * n_i, step=n_i)
+        poses = u_intents.view(b * n_i, self.d_model).index_select(0, max_activations)
 
         # intents (b, d_model)
-        intents = cls_token + max_activation_poses
+        intents = cls_token + poses
 
-        # TODO - Select Masked words, mask them accordingly.
-
-        pass
+        return slots, intents
