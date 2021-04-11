@@ -1,4 +1,4 @@
-# Joint Intent Detection and Slot Labeling via Self-Attention Capsule Networks
+# (Work in Progress) Joint Intent Detection and Slot Labeling via Self-Attention Capsule Networks
 
 1) Capsule Theory
 

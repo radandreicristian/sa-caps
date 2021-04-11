@@ -160,18 +160,18 @@ class SRCapsNet(nn.Module):
 
         return a_intents, u_intents
 
-    def forward(self, x):
+    def forward(self, tokens):
 
-        # Todo - Do the padding in the training loop
-        # x (b, max_batch_seq_len, chars_in_word)
-        b, batch_max_seq_len, _ = x.shape
+        # x: (b, max_batch_seq_len, vocab_len)
+        b, batch_max_seq_len, _ = tokens.shape
         n_i = self.n_intent_caps
-        assert (batch_max_seq_len <= self.max_seq_len, 'A sequence in the batch is too long.')
 
-        # Todo - Replace with ConveRT aggregate vector
+        # assert (batch_max_seq_len <= self.max_seq_len, 'A sequence in the batch is too long.')
+
+        # Todo - Should be the mean of the sentence embeddings or something :shrug:
         cls_token = torch.Tensor(torch.randn(1, 1, self.d_model))
 
-        tokens = torch.cat((x, cls_token), dim=-2)
+        tokens = torch.cat((tokens, cls_token), dim=-2)
 
         # tokens(b, max_seq_len+1, d_model)
         embedded_tokens = self.word_featurizer(tokens)
