@@ -1,43 +1,29 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as f
 
 
 class TokenFeaturizer(nn.Module):
     def __init__(self,
-                 pretrained_embeddings: dict,
-                 sparse_features: dict,
-                 d_model: int = 256,
-                 masked_training: bool = False):
-        """
-
-        :param pretrained_embeddings: A dictionary containing pre-trained embeddings. Key - word, Value - embedding vector
-        :param sparse_features: A dictionary containing sparse features. Key - word, Value - Sparse features vector
-        :param d_model:
-        """
+                 d_pretrained: int,
+                 d_sparse: int,
+                 d_model: int = 256):
         super(TokenFeaturizer, self).__init__()
 
-        self.pretrained = pretrained_embeddings
-        self.sparse = sparse_features
+        self.spare_fc = nn.Linear(d_sparse, d_model)
 
-        self.d_pretrained = len(list(self.pretrained.values())[0])
-        self.d_sparse = len(list(self.sparse.values())[0])
+        self.concat_fc = nn.Linear(d_pretrained + d_model, d_model)
 
-        self.d_model = d_model
+    def forward(self, pretrained, sparse):
+        # pretrained (b, max_seq_len, d_pretrained)
+        # sparse (b, max_seq_len, d_sparse)
+        sparse = self.spare_fc(sparse)
 
-        self.spare_fc = nn.Linear(self.d_sparse, self.d_model)
+        # Take the sparse features through the FC layer
+        # sparse (b, max_seq_len, d_model)
+        sparse = self.spare_fc(sparse)
 
-        self.concat_fc = nn.Linear(self.d_pretrained + self.d_model, self.d_model)
+        # features (b, max_seq_len, d_pretrained+d_model)
+        features = torch.cat((sparse, pretrained), dim=-1)
 
-    def forward(self, x):
-        """
-
-        :param x:
-        :return:
-        """
-        # x = (b, s_len)
-
-        sparse_features = torch.Tensor(list(map(lambda e: self.sparse[e], x))) # (b, s_len, d_sparse)
-        pretrained_embeddings = torch.Tensor(list(map(lambda e: self.pretrained[e], x)))  # (b, s_len, d_pretrained)
-        features = torch.cat((sparse_features, pretrained_embeddings), dim=-1)  # (b, s_len, 2*d_model)
-        return self.concat_fc(features)  # (b, s_len, d_model)
+        # return (b, max_seq_len, d_model)
+        return self.concat_fc(features)
