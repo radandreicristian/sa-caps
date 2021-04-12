@@ -1,7 +1,7 @@
 import json
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -55,33 +55,48 @@ class NluBenchmarkDataset(Dataset):
         # Pad tokens sequence with <pad> - Embedding of this token should be all zeros
         df['tokens'] = df.apply(lambda row: pad_sequence(row['tokens'], max_len=35, pad_value='<pad>'), axis=1)
 
+        # Each element is a str. No point OHE-ing, as the vocab size is huge.
+        # Just leave them as strings and look them up in the pretrained/sparse dictionaries when loading in __getitem__
+        # self.x (n_samples, max_seq_len)
+        self.x = np.stack(np.array([np.array(el.split(), dtype=object) for el in df['tokens']]))
+
         # Pad slots sequence with O
         df['slot_tags'] = df.apply(lambda row: pad_sequence(row['slot_tags'], max_len=35, pad_value='O'), axis=1)
 
-        # Independent variable - Sentences containing utterances - (n_samples, max_seq_len)
-        self.x = df.iloc[1:, 1]
+        # slot_tags (n_samples, max_seq_len). Each element needs to be one hot encoded
+        slot_tags = np.array([np.array(el.split(), dtype=object) for el in df['slot_tags']])
+        slot_tags = np.stack(slot_tags)
 
-        # Todo - Slot tags needs to be a tensor
-        # Get the slots column and count the different slots
-        slot_tags = df.iloc[1:, 2].values
-        n_slots = df.iloc[1:, 2].count() + 1
+        # shape (n_samples, max_seq_len)
+        initial_shape = slot_tags.shape
 
-        # Get the number of dims
-        scatter_dim = len(slot_tags.size())
-        y_tensor = slot_tags.view(*slot_tags.size(), -1)
-        zeros = torch.zeros(*slot_tags.size(), n_slots, dtype=slot_tags.dtype)
+        # Flatten and one-hot encode the flattened array
+        slot_tags_flattened = slot_tags.flatten()
+        unique, inverse = np.unique(slot_tags_flattened, return_inverse=True)
+        onehot_encodings = np.eye(unique.shape[0])[inverse]
 
-        # self.y_slots (n_samples, max_seq_len, n_slots)
-        self.y_slots = zeros.scatter(scatter_dim, y_tensor, 1)
+        # self.slot_tags (n_samples, max_seq_len, n_slots) - Each element is a onehot encoding over the number of slots.
+        # The reshape's last dim is -1, since we don't know how many slots there are in total.
+        self.slot_tags = torch.Tensor(onehot_encodings.reshape(initial_shape + (-1,)))
 
-        # Target variable - (n_samples, n_slots
-        self.y_intents = OneHotEncoder().fit_transform(df.iloc[1:, 3]).toarray()
+        # self.intents (n_samples, n_intents) - Each element is a onehot encoding over the number of intents.
+        intents = np.array(df['intent']).reshape(-1, 1)
+        self.intents = torch.Tensor(OneHotEncoder().fit_transform(intents).toarray())
 
-    def __getitem__(self, index):
+    def __getitem__(self, index) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Returns the variables corresponding to the index.
+        :param index: An integer value, in (0, len(self))
+        :return: A tuple containing the following 4 torch tensors:
+        - pretrained (max_seq_len, d_pretrained) - Pretrained embeddings for each token in the sentence.
+        - sparse (max_seq_len, d_sparse) - Sparse embeddings for each token in the senetnece.
+        - slot_tags (max_seq_len, n_slots) - One hot encoding of slot tags
+        - intent (max_seq_len, n_intents) - One hot encoding of intents
+        """
         sentence = self.x[index]
 
         # pretrained (max_seq_len, d_pretrained)
-        pretrained = np.array([self.pretrained_embeddings[i] for i in sentence])
+        pretrained = torch.Tensor(np.array([self.pretrained_embeddings[i] for i in sentence]))
 
         # sparse (max_seq_len, d_sparse)
         sparse_embeddings = np.zeros((self.max_seq_len, self.sparse_dim))
@@ -89,6 +104,13 @@ class NluBenchmarkDataset(Dataset):
             sparse_indices = self.sparse_embeddings[word]
             for s_index in sparse_indices:
                 sparse_embeddings[w_index][s_index] = 1
+
+        sparse = torch.Tensor(sparse_embeddings)
+
+        #
+        slot_tags = self.slot_tags[index]
+        intent = self.intents[index]
+        return pretrained, sparse, slot_tags, intent
 
     def __len__(self):
         return len(self.x)

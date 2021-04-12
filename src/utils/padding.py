@@ -1,3 +1,6 @@
+import re
+
+
 def pad_sequence(sequence: str, max_len: int = 35, pad_value: str = '<pad>') -> str:
     """
     Pads a sequence of strings with a string pad value, equally to the left/right.
@@ -6,6 +9,9 @@ def pad_sequence(sequence: str, max_len: int = 35, pad_value: str = '<pad>') -> 
     :param pad_value: The value to be padded with.
     :return: Padded sequence of length max_len
     """
+
+    # Replace multiple spaces with single space.
+    sequence = re.sub(' +', ' ', sequence)
 
     seq_split = sequence.split(" ")
     seq_len = len(seq_split)
@@ -33,8 +39,6 @@ def pad_sequence(sequence: str, max_len: int = 35, pad_value: str = '<pad>') -> 
 
     assert len(padded_sequence) == max_len, \
         f'Final length ({len(padded_sequence)}) of padded sequence {padded_sequence} is different from {max_len}.'
-
-    print(f'Seq len {len(padded_sequence)}')
 
     return " ".join(padded_sequence)
 
