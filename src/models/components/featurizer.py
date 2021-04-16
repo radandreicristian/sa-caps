@@ -3,27 +3,36 @@ import torch.nn as nn
 
 
 class TokenFeaturizer(nn.Module):
+    """
+    A sub-network with 2 hidden layers that transforms the sparse and dense features of a word into a representation
+    into the d_model space.
+    """
+
     def __init__(self,
-                 d_pretrained: int,
+                 d_dense: int,
                  d_sparse: int,
-                 d_model: int = 256):
+                 p_dropout: float,
+                 d_model: int):
         super(TokenFeaturizer, self).__init__()
 
-        self.spare_fc = nn.Linear(d_sparse, d_model)
+        # A linear mapping from d_sparse to d_model
+        self.spare_fc = nn.Linear(in_features=d_sparse, out_features=d_dense)
 
-        self.concat_fc = nn.Linear(d_pretrained + d_model, d_model)
+        # A linear mapping from d_pretrained + d_model (from concatenation) to d_model
+        self.concat_fc = nn.Linear(2 * d_dense, d_model)
 
-    def forward(self, pretrained, sparse):
-        # pretrained (b, max_seq_len, d_pretrained)
+        self.dropout = nn.Dropout(p=p_dropout)
+
+    def forward(self, dense, sparse):
+        # pretrained (b, max_seq_len, d_dense)
         # sparse (b, max_seq_len, d_sparse)
-        sparse = self.spare_fc(sparse)
 
         # Take the sparse features through the FC layer
-        # sparse (b, max_seq_len, d_model)
-        sparse = self.spare_fc(sparse)
+        # sparse (b, max_seq_len, d_dense)
+        sparse = self.dropout(self.spare_fc(sparse))
 
-        # features (b, max_seq_len, d_pretrained+d_model)
-        features = torch.cat((sparse, pretrained), dim=-1)
+        # features (b, max_seq_len, 2*d_dense)
+        features = torch.cat((sparse, dense), dim=-1)
 
         # return (b, max_seq_len, d_model)
         return self.concat_fc(features)

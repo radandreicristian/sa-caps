@@ -4,6 +4,8 @@ from typing import Iterable
 
 import regex
 
+from src.utils.date import get_hour_min
+
 
 def pairwise(iterable: Iterable,
              tuple_size: int):
@@ -42,13 +44,15 @@ def ngram_to_index(ngram: str,
                    n_chars: int = 26):
     """
     Return the lexicographic index of the ngram following the pattern of index - value. Example is for an
-    0 - 'a'
+    1 - 'a'
     ...
-    25 - 'z'
-    26 - 'aa'
+    26 - 'z'
+    27 - 'aa'
+    52  - 'az'
+    53  - 'ba'
     ...
-    701 - 'zz'
-    702 - 'aaa'
+    703 - 'zz'
+    704 - 'aaa'
     ...
     18278 - 'zzz'
     18279 - 'aaaa'
@@ -60,12 +64,15 @@ def ngram_to_index(ngram: str,
     """
     index = 0
     ord_a = ord('a')
+    indices = list(map(lambda x: ord(x) - ord_a + 1, ngram))
     for i, char in enumerate(reversed(ngram)):
-        if i == 0:
-            index += ord(char) - ord_a
-        else:
-            index += pow(n_chars, i + 1)
-    return index
+        index += (indices[i]) * pow(n_chars, i)
+    # Todo - This needs some thorough testing:)
+    return index - 1
+
+
+def f7(seq):
+    return list(dict.fromkeys(seq))
 
 
 def compute_sparse_features(word: str,
@@ -86,30 +93,30 @@ def compute_sparse_features(word: str,
     for ngram in n_grams_filtered:
         index = ngram_to_index(n_chars=n_chars, ngram=ngram)
         ones.append(index)
-    return list(set(ones))
+    return f7(ones)
 
 
 if __name__ == '__main__':
 
     n_ch = 26
-    max_ngram_s = 3
-    sparse_features = {}
     vocab_file = '/home/rad/projects/id-sf/data/vocabs/en_vocab.txt'
-    f = open(vocab_file, 'r')
-    count = 0
-    with(open('/home/rad/projects/id-sf/data/embeddings/sparse/en.json', 'w')) as out:
-        for line in f:
-            line = line.replace('\n', '').replace('\"', '')
-            count += 1
-            if count % 10000 == 0:
-                print(f'Reached {count}th item in vocab')
-            sparse_features[str(line)] = compute_sparse_features(str(line), n_ch, max_ngram_s)
 
-        # Add special cases
-        sparse_features['<pad>'] = []
-        sparse_features['<mask>'] = []
-        sparse_features['<eof>'] = []
+    for max_ngrams in range(2, 6):
+        print(f'Started computing sparse features for n_grams up to {max_ngrams} at {get_hour_min()}')
+        sparse_features = {}
+        f = open(vocab_file, 'r')
+        count = 0
+        with(open(f'/home/rad/projects/id-sf/data/embeddings/sparse/en_{max_ngrams}.json', 'w')) as out:
+            for line in f:
+                line = line.replace('\n', '').replace('\"', '')
+                sparse_features[str(line)] = compute_sparse_features(str(line), n_ch, max_ngrams)
 
-        json.dump(sparse_features, out)
-        out.close()
-    f.close()
+            # Add special cases
+            sparse_features['<pad>'] = []
+            sparse_features['<mask>'] = []
+            sparse_features['<eof>'] = []
+
+            json.dump(sparse_features, out)
+            out.close()
+        f.close()
+        print(f'Finished computing sparse features for n_grams up to {max_ngrams} at {get_hour_min()}')
