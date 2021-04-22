@@ -5,7 +5,8 @@ import torch.nn as nn
 import torch.nn.functional as f
 from einops import repeat
 
-from src.models.components.featurizer import TokenFeaturizer
+from src.models.components.featurizers import SparseDenseTokenFeaturizer, DenseTokenFeaturizer, \
+    SparseTokenFeaturizer
 
 
 class SRCapsNet(nn.Module):
@@ -22,6 +23,8 @@ class SRCapsNet(nn.Module):
                  d_model: int,
                  d_semantic_space: int,
                  p_dropout_featurizer,
+                 use_dense_features: bool,
+                 use_sparse_features: bool,
                  p_dropout_intent):
         super(SRCapsNet, self).__init__()
 
@@ -37,10 +40,15 @@ class SRCapsNet(nn.Module):
 
         self.device = device
 
-        self.featurizer = TokenFeaturizer(d_dense=d_dense,
-                                          d_sparse=d_sparse,
-                                          d_model=d_model,
-                                          p_dropout=p_dropout_featurizer)
+        featurizers = {(True, True): SparseDenseTokenFeaturizer,
+                       (True, False): SparseTokenFeaturizer,
+                       (False, True): DenseTokenFeaturizer}
+        kwargs = {'d_dense': d_dense, 'd_sparse': d_sparse, 'd_model': d_model, 'p_dropout': p_dropout_featurizer}
+
+        if not use_sparse_features and not use_dense_features:
+            raise ValueError('Must use at least one from dense/sparse features')
+
+        self.featurizer = featurizers[(use_sparse_features, use_dense_features)](**kwargs)
 
         # Todo - This needs to be relative position encoding
         self.encoder_layers = nn.ModuleList(
@@ -77,7 +85,7 @@ class SRCapsNet(nn.Module):
                                                    self.d_model)),
                                       requires_grad=True)
 
-        # Embedds
+        # Embeddings
         # self.intent_embedding = nn.Linear(in_features=self.n_intents, out_features=self.d_semantic_space)
         # self.intent_embeddings(n_intents, d_semantic_space)
         self.all_intent_embeddings = nn.Parameter(torch.randn((self.n_intents,

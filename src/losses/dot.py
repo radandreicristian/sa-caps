@@ -39,5 +39,5 @@ def dot_loss(y_predicted: torch.Tensor,
     inner_sum = (si_pluses - torch.log(torch.exp(si_pluses) + torch.sum(torch.exp(si_minuses), dim=1))).to(device)
 
     # loss (1,)
-    loss = -torch.mean(inner_sum, dim=0)
-    return loss
+    loss = torch.mean(inner_sum, dim=0).squeeze()
+    return -loss

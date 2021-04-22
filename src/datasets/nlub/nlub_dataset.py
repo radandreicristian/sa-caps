@@ -19,14 +19,14 @@ class NluBenchmarkDataset(Dataset):
                  max_ngram_size: int,
                  n_chars: int,
                  max_seq_len: int,
-                 dense_embeddings_path: Optional[str] = None,
-                 sparse_embeddings_path: Optional[str] = None
+                 dense_features_path: Optional[str] = None,
+                 sparse_features_path: Optional[str] = None
                  ):
         """
 
         :param dataset_path:
-        :param sparse_embeddings_path:
-        :param dense_embeddings_path:
+        :param sparse_features_path:
+        :param dense_features_path:
         :param max_seq_len:
         """
         super(NluBenchmarkDataset, self).__init__()
@@ -34,25 +34,28 @@ class NluBenchmarkDataset(Dataset):
         root_path = Path(__file__).parent.parent.parent.parent
         csv_path = os.path.join(root_path, dataset_path)
 
-        self.sparse_dim = sum([pow(n_chars, ngram_size) for ngram_size in range(1, max_ngram_size + 1)])
+        self.d_sparse = sum([pow(n_chars, ngram_size) for ngram_size in range(1, max_ngram_size + 1)])
         self.max_seq_len = max_seq_len
+
+        self.use_sparse_embeddings = True if sparse_features_path is not None else False
+        self.use_dense_features = True if dense_features_path is not None else False
 
         # Load the dataset
         df = pd.read_csv(csv_path, sep=';')
 
         # Make sure we have at least one type of embeddings
-        if sparse_embeddings_path is None and dense_embeddings_path is None:
+        if not self.use_dense_features and not self.use_sparse_embeddings:
             raise Exception("There is no embedding path provided. Please specify at least one in the args")
 
         # Load pretrained embeddings
         # Todo: Treat the case when it's glove and not fasttext embeddings. Meh
-        if dense_embeddings_path is not None:
-            pretrained_embeddings = load_facebook_vectors(dense_embeddings_path)
+        if self.use_dense_features:
+            pretrained_embeddings = load_facebook_vectors(dense_features_path)
             self.pretrained_embeddings = pretrained_embeddings.wv
 
         # Load sparse embeddings
-        if sparse_embeddings_path is not None:
-            sparse_embeddings_file = open(sparse_embeddings_path, 'r')
+        if self.use_sparse_embeddings:
+            sparse_embeddings_file = open(sparse_features_path, 'r')
             self.sparse_embeddings = json.load(sparse_embeddings_file)
 
         # Pad tokens sequence with <pad> - Embedding of this token should be all zeros
@@ -109,14 +112,21 @@ class NluBenchmarkDataset(Dataset):
         dense = torch.Tensor(np.array([self.pretrained_embeddings[i] for i in sentence]))
 
         # sparse (max_seq_len, d_sparse)
-        sparse_embeddings = np.zeros((self.max_seq_len, self.sparse_dim))
-        for w_index, word in enumerate(sentence):
-            sparse_indices = self.sparse_embeddings.get(word, [])
-            for s_index in sparse_indices:
-                sparse_embeddings[w_index][s_index] = 1
+        indices = [[], []]
+        n_values = 0
+        shape = (self.max_seq_len, self.d_sparse)
 
-        sparse = torch.Tensor(sparse_embeddings)
-
+        if self.use_sparse_embeddings:
+            for w_index, word in enumerate(sentence):
+                sparse_indices = self.sparse_embeddings.get(word, [])
+                for s_index in sparse_indices:
+                    indices[0].append(w_index)
+                    indices[1].append(s_index)
+                    n_values += 1
+            values = [1 for _ in range(n_values)]
+        else:
+            values = []
+        sparse = torch.sparse_coo_tensor(torch.Tensor(indices), values, shape)
         # slot_tags (max_seq_len, n_slots) - Per-word one-hot
         slot_tags = self.slot_tags[index]
 
