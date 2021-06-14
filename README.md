@@ -1,5 +1,7 @@
 # (Work in Progress) Joint Intent Detection and Slot Labeling via Self-Attention Capsule Networks
 
+PyTorch implementation of a deep learning architecture that jointly solves intent detection and slot labeling by adapting the self-routing capsule model from computer vision.
+
 1) Capsule Theory
 
 * (Hinton, 2012)
@@ -41,4 +43,4 @@
 * (Defazio, 2021)
   - [Adaptivity without Compromise: A Momentumized, Adaptive, Dual Averaged Gradiewnt Method for Stochastic Optimization](https://arxiv.org/pdf/2101.11075.pdf)
 
-https://github.com/Botfuel/benchmark-nlp-2018
+7) Data https://github.com/Botfuel/benchmark-nlp-2018
