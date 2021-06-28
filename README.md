@@ -1,4 +1,4 @@
-# (Work in Progress) Joint Intent Detection and Slot Labeling via Self-Attention Capsule Networks
+# (Work in Progress) Joint Intent Detection and Slot Labeling via Self-Routing Capsule Networks
 
 PyTorch implementation of a theoretized custom deep learning architecture that jointly solves intent detection and slot labeling by adapting the self-routing capsule model from computer vision.
 
